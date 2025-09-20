@@ -5,9 +5,10 @@ package.domain = org.test
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 version = 1.0
-requirements = python3,kivy
+requirements = python3, kivy
 orientation = portrait
 fullscreen = 0
+log_level = 2
 
 [buildozer]
 log_level = 2
@@ -18,6 +19,8 @@ android.api = 28
 android.minapi = 21
 android.ndk = 23b
 p4a.branch = master
+android.allow_backup = True
+android.icon = icon.png
 
 [loggers]
 keys = root
