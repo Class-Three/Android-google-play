@@ -33,24 +33,39 @@ jobs:
 
     - name: Install Buildozer and dependencies
       run: |
-        pip3 install buildozer
+        pip3 install buildozer==1.2.0
         pip3 install cython==0.29.33
         pip3 install virtualenv
 
-    - name: Build with Buildozer (with logging)
+    - name: Verify project structure
       run: |
-        # تنظيف أولي
+        echo "=== Project Contents ==="
+        ls -la
+        echo "=== Python Files ==="
+        find . -name "*.py" | head -10
+        echo "=== Buildozer Spec Check ==="
+        if [ -f buildozer.spec ]; then
+            echo "buildozer.spec exists"
+            cat buildozer.spec | head -20
+        else
+            echo "ERROR: buildozer.spec not found!"
+        fi
+
+    - name: Build with Buildozer (debug mode)
+      run: |
+        # تنظيف أي بناء سابق
         buildozer android clean 2>/dev/null || true
         
         # البناء مع تسجيل مفصل
+        echo "Starting Buildozer build..."
         buildozer -v android debug 2>&1 | tee build.log
+        BUILD_STATUS=${PIPESTATUS[0]}
         
-        # إذا فشل، اعرض التفاصيل
-        if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            echo "=== BUILD FAILED - LAST 50 LINES ==="
-            tail -50 build.log
-            echo "=== FULL BUILD LOG ==="
-            cat build.log
+        if [ $BUILD_STATUS -ne 0 ]; then
+            echo "=== BUILD FAILED - FIRST 50 LINES ==="
+            head -50 build.log
+            echo "=== BUILD FAILED - LAST 20 LINES ==="
+            tail -20 build.log
             exit 1
         fi
 
@@ -60,8 +75,7 @@ jobs:
         name: myapp-apk
         path: bin/*.apk
 
-    - name: Upload build log (if failed)
-      if: failure()
+    - name: Upload build log
       uses: actions/upload-artifact@v4
       with:
         name: build-log
