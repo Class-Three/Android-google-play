@@ -7,7 +7,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 40  # زيادة وقت الانتظار
+    timeout-minutes: 95  # زيادة الوقت لبناء Android
 
     steps:
     - name: Checkout code
@@ -32,82 +32,153 @@ jobs:
           cmake \
           libffi-dev \
           libssl-dev \
-          libsqlite3-dev
+          libsqlite3-dev \
+          build-essential \
+          python3-dev
 
     - name: Install Python dependencies
       run: |
-        python3 -m pip install --upgrade pip
+        python3 -m pip install --upgrade pip setuptools wheel
         pip3 install buildozer==1.4.0
-        pip3 install cython==0.29.33
+        pip3 install cython==0.29.36
         pip3 install virtualenv
-        pip3 install setuptools
 
-    - name: Verify project structure
+    - name: Verify and optimize buildozer.spec
       run: |
-        echo "=== Project Structure ==="
-        ls -la
-        echo "=== Python Files ==="
-        find . -name "*.py" -exec ls -la {} \;
-        echo "=== Buildozer Spec ==="
+        echo "=== Current buildozer.spec ==="
         if [ -f buildozer.spec ]; then
             cat buildozer.spec
+            # نسخ احتياطي
+            cp buildozer.spec buildozer.spec.backup
         else
-            echo "Creating default buildozer.spec..."
             buildozer init
         fi
 
-    - name: Set up Buildozer environment
-      run: |
-        # إنشاء مجلدات ضرورية لبناء Android
-        mkdir -p .buildozer/android/platform
-        export PATH="$HOME/.local/bin:$PATH"
+        # تحسين ملف buildozer.spec
+        python3 -c "
+import re
+spec_content = open('buildozer.spec', 'r').read()
+
+# إزالة التعليقات الزائدة والأسطر الفارغة
+spec_content = re.sub(r'#.*\\n', '\\n', spec_content)
+spec_content = re.sub(r'\\n\\s*\\n', '\\n', spec_content)
+
+# تأكد من وجود الإعدادات الأساسية
+required_settings = {
+    'title': 'MyKivyApp',
+    'package.name': 'mykivyapp', 
+    'package.domain': 'org.test',
+    'source.dir': '.',
+    'source.include_exts': 'py,png,jpg,kv,atlas',
+    'version': '1.0',
+    'requirements': 'python3,kivy',
+    'orientation': 'portrait',
+    'android.permissions': 'INTERNET',
+    'android.api': '28',
+    'android.minapi': '21'
+}
+
+for key, value in required_settings.items():
+    if not re.search(f'^{key}\s*=', spec_content, re.MULTILINE):
+        spec_content += f'{key} = {value}\\n'
+
+with open('buildozer.spec', 'w') as f:
+    f.write(spec_content)
         
-        # تعيين متغيرات البيئة المطلوبة
+        echo 'buildozer.spec optimized'
+        "
+
+    - name: Build APK with optimized settings
+      run: |
+        # تنظيف شامل
+        buildozer android clean 2>/dev/null || true
+        
+        # إعداد متغيرات البيئة المثلى
         export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
         export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
         export ANDROIDNDK="$HOME/.buildozer/android/platform/android-ndk-r23b"
+        export PATH="$HOME/.local/bin:$PATH"
         
-        echo "JAVA_HOME set to: $JAVA_HOME"
-        echo "Buildozer path: $(which buildozer)"
+        # بناء مع إدارة ذاكرة محسنة
+        echo "Starting optimized build..."
+        python3 -c "
+import subprocess
+import sys
+import os
 
-    - name: Build APK with detailed logging
-      run: |
-        # تنظيف أي بناء سابق
-        buildozer android clean 2>/dev/null || true
-        
-        echo "=== Starting Buildozer Build Process ==="
-        
-        # البناء مع التقاط كامل السجلات
-        set -o pipefail
-        buildozer -v android debug 2>&1 | tee build.log
-        BUILD_STATUS=$?
-        
-        if [ $BUILD_STATUS -eq 0 ]; then
+# إعداد عملية البناء مع إدارة أفضل للذاكرة
+env = os.environ.copy()
+env['PYTHONUNBUFFERED'] = '1'
+
+process = subprocess.Popen(
+    ['buildozer', '-v', 'android', 'debug'],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    universal_newlines=True,
+    env=env,
+    bufsize=1
+)
+
+# قراءة المخرجات بشكل تدريجي لمنع امتلاء Buffer
+with open('build.log', 'w') as log_file:
+    while True:
+        output = process.stdout.readline()
+        if output == '' and process.poll() is not None:
+            break
+        if output:
+            print(output.strip())
+            log_file.write(output)
+            log_file.flush()
+
+exit_code = process.poll()
+sys.exit(exit_code)
+        " 2>&1 | tee -a build_detailed.log
+
+        # التحقق من حالة البناء
+        if [ $? -eq 0 ]; then
             echo "=== BUILD SUCCESSFUL ==="
-            ls -la bin/ || echo "bin directory not found"
+            ls -la bin/
         else
-            echo "=== BUILD FAILED ==="
-            echo "=== Last 30 lines of build log ==="
-            tail -30 build.log
-            echo "=== Error patterns in log ==="
-            grep -i "error\|fail\|exception" build.log | head -20
+            echo "=== BUILD FAILED - ANALYZING LOGS ==="
+            
+            # تحليل مفصل للخطأ
+            echo "=== LAST 20 LINES ==="
+            tail -20 build.log | tail -20
+            
+            echo "=== COMMON ERROR PATTERNS ==="
+            grep -i -E "error|fail|exception|missing|not found" build.log | tail -10
+            
+            echo "=== MEMORY ISSUES ==="
+            grep -i -E "memory|kill|oom|swap" build.log || echo "No memory issues detected"
+            
+            echo "=== COMPILATION ERRORS ==="
+            grep -i -E "compile|cython|gcc|g++" build.log | grep -i error | tail -5 || echo "No compilation errors detected"
+            
             exit 1
         fi
 
-    - name: Upload APK artifact
+    - name: Upload APK on success
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: android-apk
+        name: android-apk-success
         path: bin/*.apk
         retention-days: 7
 
-    - name: Upload build logs
-      if: always()
+    - name: Upload build logs on failure
+      if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: build-logs
+        name: build-failure-logs
         path: |
           build.log
+          build_detailed.log
           .buildozer/**/log.txt
+        retention-days: 3
+
+    - name: Upload buildozer spec
+      uses: actions/upload-artifact@v4
+      with:
+        name: buildozer-spec
+        path: buildozer.spec
         retention-days: 3
