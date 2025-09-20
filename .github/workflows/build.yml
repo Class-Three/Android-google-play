@@ -26,7 +26,7 @@ jobs:
           zlib1g-dev \
           libncurses5-dev \
           libncursesw5-dev \
-          libtinfo5 \
+          libtinfo6 \  # التغيير هنا
           cmake \
           libffi-dev \
           libssl-dev
@@ -35,9 +35,7 @@ jobs:
       run: pip3 install buildozer cython virtualenv
 
     - name: Build with Buildozer
-      run: |
-        # أزلنا buildozer init لأنه موجود بالفعل
-        buildozer -v android debug
+      run: buildozer -v android debug
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
