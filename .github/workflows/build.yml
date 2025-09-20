@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 40  # زيادة وقت الانتظار
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -29,54 +31,83 @@ jobs:
           libtinfo6 \
           cmake \
           libffi-dev \
-          libssl-dev
+          libssl-dev \
+          libsqlite3-dev
 
-    - name: Install Buildozer and dependencies
+    - name: Install Python dependencies
       run: |
-        pip3 install buildozer==1.2.0
+        python3 -m pip install --upgrade pip
+        pip3 install buildozer==1.4.0
         pip3 install cython==0.29.33
         pip3 install virtualenv
+        pip3 install setuptools
 
     - name: Verify project structure
       run: |
-        echo "=== Project Contents ==="
+        echo "=== Project Structure ==="
         ls -la
         echo "=== Python Files ==="
-        find . -name "*.py" | head -10
-        echo "=== Buildozer Spec Check ==="
+        find . -name "*.py" -exec ls -la {} \;
+        echo "=== Buildozer Spec ==="
         if [ -f buildozer.spec ]; then
-            echo "buildozer.spec exists"
-            cat buildozer.spec | head -20
+            cat buildozer.spec
         else
-            echo "ERROR: buildozer.spec not found!"
+            echo "Creating default buildozer.spec..."
+            buildozer init
         fi
 
-    - name: Build with Buildozer (debug mode)
+    - name: Set up Buildozer environment
+      run: |
+        # إنشاء مجلدات ضرورية لبناء Android
+        mkdir -p .buildozer/android/platform
+        export PATH="$HOME/.local/bin:$PATH"
+        
+        # تعيين متغيرات البيئة المطلوبة
+        export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+        export ANDROIDSDK="$HOME/.buildozer/android/platform/android-sdk"
+        export ANDROIDNDK="$HOME/.buildozer/android/platform/android-ndk-r23b"
+        
+        echo "JAVA_HOME set to: $JAVA_HOME"
+        echo "Buildozer path: $(which buildozer)"
+
+    - name: Build APK with detailed logging
       run: |
         # تنظيف أي بناء سابق
         buildozer android clean 2>/dev/null || true
         
-        # البناء مع تسجيل مفصل
-        echo "Starting Buildozer build..."
-        buildozer -v android debug 2>&1 | tee build.log
-        BUILD_STATUS=${PIPESTATUS[0]}
+        echo "=== Starting Buildozer Build Process ==="
         
-        if [ $BUILD_STATUS -ne 0 ]; then
-            echo "=== BUILD FAILED - FIRST 50 LINES ==="
-            head -50 build.log
-            echo "=== BUILD FAILED - LAST 20 LINES ==="
-            tail -20 build.log
+        # البناء مع التقاط كامل السجلات
+        set -o pipefail
+        buildozer -v android debug 2>&1 | tee build.log
+        BUILD_STATUS=$?
+        
+        if [ $BUILD_STATUS -eq 0 ]; then
+            echo "=== BUILD SUCCESSFUL ==="
+            ls -la bin/ || echo "bin directory not found"
+        else
+            echo "=== BUILD FAILED ==="
+            echo "=== Last 30 lines of build log ==="
+            tail -30 build.log
+            echo "=== Error patterns in log ==="
+            grep -i "error\|fail\|exception" build.log | head -20
             exit 1
         fi
 
-    - name: Upload APK
+    - name: Upload APK artifact
+      if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: myapp-apk
+        name: android-apk
         path: bin/*.apk
+        retention-days: 7
 
-    - name: Upload build log
+    - name: Upload build logs
+      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: build-log
-        path: build.log
+        name: build-logs
+        path: |
+          build.log
+          .buildozer/**/log.txt
+        retention-days: 3
