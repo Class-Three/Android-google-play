@@ -31,14 +31,38 @@ jobs:
           libffi-dev \
           libssl-dev
 
-    - name: Install Buildozer and Cython
-      run: pip3 install buildozer cython virtualenv
+    - name: Install Buildozer and dependencies
+      run: |
+        pip3 install buildozer
+        pip3 install cython==0.29.33
+        pip3 install virtualenv
 
-    - name: Build with Buildozer
-      run: buildozer -v android debug
+    - name: Build with Buildozer (with logging)
+      run: |
+        # تنظيف أولي
+        buildozer android clean 2>/dev/null || true
+        
+        # البناء مع تسجيل مفصل
+        buildozer -v android debug 2>&1 | tee build.log
+        
+        # إذا فشل، اعرض التفاصيل
+        if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            echo "=== BUILD FAILED - LAST 50 LINES ==="
+            tail -50 build.log
+            echo "=== FULL BUILD LOG ==="
+            cat build.log
+            exit 1
+        fi
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: myapp-apk
         path: bin/*.apk
+
+    - name: Upload build log (if failed)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
